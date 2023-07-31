@@ -10,20 +10,30 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class CrptApi {
-
+    //todo singel
     private final String URL = "/api/v3/lk/documents/commissioning/contract/create"; //47 страница
     /*
     на 47 страницы url
     а на 108 шаблон документа
      */
-    private final String CLIENT_TOKEN = "clientToken";
-    private final String USER_NAME = "userName";
-    // коллекция в которую будем добавлять время обращения и в итоге будем сравнивать длину коллекции и с requestLimit
-    // или создать отдельную переменную requestCount и startRequest немного меньше памяти будет занимать
-    private final int requestLimit; // положительное значение, которое определяет максимальное количество запросов в этом промежутке времени.
-    private final TimeUnit timeUnit; //timeUnit – указывает промежуток времени – секунда, минута и пр.
-    private int requestCount; // счетчик количество запросов
-    private Long startRequest; // время стартового запроса
+    private final String SIGNATURE = "clientToken";
+
+    /**
+     * положительное значение, которое определяет максимальное количество запросов в этом промежутке времени.
+     */
+    private final int requestLimit;
+    /**
+     * указывает промежуток времени – секунда, минута и пр.
+     */
+    private final TimeUnit timeUnit;
+    /**
+     * счетчик количество запросов
+     */
+    private int requestCount;
+    /**
+     * время стартового запроса
+     */
+    private Long startRequest;
     private final Lock lock = new ReentrantLock();
 
     public CrptApi(TimeUnit timeUnit, int requestLimit) {
@@ -37,6 +47,7 @@ public class CrptApi {
         }
     }
 
+    //Реализовать нужно единственный метод – Создание документа для ввода в оборот
     public synchronized void createDocument(Document document, String sub) throws InterruptedException {
         checkRequestLimit();
         try {
@@ -49,8 +60,6 @@ public class CrptApi {
         }
     }
 
-    //Реализовать нужно единственный метод – Создание документа для ввода в оборот
-    //??? данные для документа откуда брать или он сам приходить откуда-то ??
 
     /**
      * Проверка на лимит и на время
@@ -93,7 +102,7 @@ public class CrptApi {
         private String doc_id;
         private String doc_status;
         private String doc_type;
-        private Boolean importRequest = true;
+        private Boolean importRequest = true; // не обязательный параметр но в примере стоит true
         private String owner_inn;
         private String participant_inn;
         private String producer_inn;
@@ -102,11 +111,11 @@ public class CrptApi {
         private String production_type;
         private List<Product> products;// не обязательный параметр
         private Date reg_date; // Автоматически присваивается при регистрации
-        // то есть мы тут null передаем а система потом присваивает
+        // то есть мы тут null передаем, а система потом присваивает
         // формат 2020-01-23
         @Expose
         private String reg_number; //Генерируется автоматически при регистрации документа
-        // не присваеватся, а именно генерируется .Значит не надо передавать это поле
+        // не присваивается, а именно генерируется. Значит не надо передавать это поле
 
         public Document(Description description,
                         String doc_id,
@@ -209,6 +218,7 @@ public class CrptApi {
         private String producer_inn;
         private Date production_date;
         private String tnved_code; // Обязательный, если не указан uitu
+        //        @JsonProperty("uitu_code)
         private String uit_code; // Обязательный, если не указан uitu
         private String uitu_code; // Обязательный, если не указан uit
 
