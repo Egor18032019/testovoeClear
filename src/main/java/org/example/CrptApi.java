@@ -218,7 +218,6 @@ public class CrptApi {
         private String producer_inn;
         private Date production_date;
         private String tnved_code; // Обязательный, если не указан uitu
-        //        @JsonProperty("uitu_code)
         private String uit_code; // Обязательный, если не указан uitu
         private String uitu_code; // Обязательный, если не указан uit
 
