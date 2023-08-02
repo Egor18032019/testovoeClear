@@ -1,8 +1,14 @@
 package org.example;
 
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.annotations.Expose;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
 
+import java.util.Base64;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -10,13 +16,16 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class CrptApi {
-    //todo singel
-    private final String URL = "/api/v3/lk/documents/commissioning/contract/create"; //47 страница
+    private final String URL = "https://ismp.crpt.ru/api/v3/lk/documents/commissioning/contract/create"; //47 страница
+
     /*
     на 47 страницы url
     а на 108 шаблон документа
+    а на 44 описан общий случай
+    То есть на /api/v3/lk/documents/create это общий
+    а на /api/v3/lk/documents/commissioning/contract/create это частность
      */
-    private final String SIGNATURE = "clientToken";
+    private final String Signature = "signature";
 
     /**
      * положительное значение, которое определяет максимальное количество запросов в этом промежутке времени.
@@ -36,23 +45,52 @@ public class CrptApi {
     private Long startRequest;
     private final Lock lock = new ReentrantLock();
 
-    public CrptApi(TimeUnit timeUnit, int requestLimit) {
+    private CrptApi(TimeUnit timeUnit, int requestLimit) {
         this.timeUnit = timeUnit;
         if (requestLimit > 0) {
             this.requestLimit = requestLimit;
             this.requestCount = 0;
-            this.startRequest = 0L;
+            this.startRequest = System.currentTimeMillis();
         } else {
             throw new IllegalArgumentException("Ноль запросов или отрицательное число запросов ?");
         }
     }
 
+    private static volatile CrptApi instance;
+
+    public static CrptApi getInstance(TimeUnit timeUnit, int requestLimit) {
+        CrptApi localInstance = instance;
+        if (localInstance == null) {
+            synchronized (CrptApi.class) {
+                localInstance = instance;
+                if (localInstance == null) {
+                    instance = localInstance = new CrptApi(timeUnit, requestLimit);
+                }
+            }
+        }
+        return localInstance;
+    }
+
+
     //Реализовать нужно единственный метод – Создание документа для ввода в оборот
-    public synchronized void createDocument(Document document, String sub) throws InterruptedException {
+    public synchronized void createDocument(DocumentFormat documentFormat,
+                                            Document document,
+                                            String productGroup,
+                                            String signature,
+                                            String type) throws InterruptedException {
         checkRequestLimit();
         try {
             lock.lock();
-
+            ObjectMapper objectMapper = new ObjectMapper();
+            String product_document = Base64.getEncoder().encodeToString(objectMapper.writeValueAsBytes(document));
+            String requestBody = String.format("{ " +
+                    "\"document_format\":\"%s\"," +
+                    "\"product_document\":\"%s\"," +
+                    "\"product_group\":\"%s\"," +
+                    "\"signature\":\"%s\"," +
+                    "\"type\":\"%s\"" +
+                    "}", documentFormat, product_document, productGroup, signature, type);
+            httpRequest(requestBody);
         } catch (Exception e) {
             throw new RuntimeException(e);
         } finally {
@@ -60,6 +98,32 @@ public class CrptApi {
         }
     }
 
+    /**
+     * Отправка
+     *
+     * @param json Тело запроса страница 44 только product_document меняем на Document со 108 страницы
+     */
+    private void httpRequest(String json) {
+//        При реализации можно использовать библиотеки HTTP клиента,
+        // это =>     <groupId>org.apache.httpcomponents</groupId>
+        //            <artifactId>httpclient</artifactId>
+        // или какая то другая ?
+
+        try {
+            HttpPost post = new HttpPost(URL);
+            StringEntity entity = new StringEntity(json);
+            post.addHeader("content-type", "application/json");
+
+            post.setEntity(entity);
+            CloseableHttpClient httpClient = HttpClientBuilder.create().build();
+            httpClient.execute(post);
+            httpClient.close();
+            requestCount++;
+            System.out.println("отправил");
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
 
     /**
      * Проверка на лимит и на время
@@ -67,31 +131,53 @@ public class CrptApi {
      * @throws InterruptedException
      */
     private void checkRequestLimit() throws InterruptedException {
+        // В одну секунду не больше 5 запросов
+        System.out.println("checkRequestLimit");
         final long current = System.currentTimeMillis(); // время текущего запроса
-
-
         // проверка на время запросов
         if (current - startRequest >= timeUnit.toMillis(1)) {
-            // если текущее время минус время последнего запроса больше чем заданный интервал, то чистим очередь и добавляем
             startRequest = current;
             requestCount = 0;
-
         }
 
 
         if (requestCount >= requestLimit) {
-            // проверка на количество запросов
+            // проверяем на кол-во и если больше то
+            // смотрим сколько времени осталось до лимита и на остаток ложим спать
 
             final int difference = (int) (current - startRequest);
 
             if (difference <= timeUnit.toMillis(1)) {
                 final long toSleep = timeUnit.toMillis(1) - difference;
+                System.out.println("toSleep " + toSleep);
                 Thread.sleep(toSleep);
 //                При превышении лимита запрос должен блокироваться, чтобы не превысить
 //                максимальное количество запросов к API и продолжить выполнение, когда ограничение
 //                не превышено.
             }
         }
+    }
+
+    public synchronized void createDocument(Main.DocumentFormat documentFormat, Main.Document document, String productGroup, String signature, String type) throws InterruptedException {
+        checkRequestLimit();
+        try {
+            lock.lock();
+            ObjectMapper objectMapper = new ObjectMapper();
+            String product_document = Base64.getEncoder().encodeToString(objectMapper.writeValueAsBytes(document));
+            String requestBody = String.format("{ " +
+                    "\"document_format\":\"%s\"," +
+                    "\"product_document\":\"%s\"," +
+                    "\"product_group\":\"%s\"," +
+                    "\"signature\":\"%s\"," +
+                    "\"type\":\"%s\"" +
+                    "}", documentFormat, product_document, productGroup, signature, type);
+            httpRequest(requestBody);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            lock.unlock();
+        }
+
     }
 
     /**
@@ -276,5 +362,11 @@ public class CrptApi {
         public String getUitu_code() {
             return uitu_code;
         }
+    }
+
+    public enum DocumentFormat {
+        MANUAL,
+        XML,
+        CSV;
     }
 }
