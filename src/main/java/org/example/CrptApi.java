@@ -1,13 +1,20 @@
 package org.example;
 
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.csv.CsvMapper;
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.google.gson.annotations.Expose;
+import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
+import org.apache.http.entity.mime.MultipartEntityBuilder;
+import org.apache.http.entity.mime.content.FileBody;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 
+import java.io.File;
 import java.util.Base64;
 import java.util.Date;
 import java.util.List;
@@ -17,15 +24,6 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class CrptApi {
     private final String URL = "https://ismp.crpt.ru/api/v3/lk/documents/commissioning/contract/create"; //47 страница
-
-    /*
-    на 47 страницы url
-    а на 108 шаблон документа
-    а на 44 описан общий случай
-    То есть на /api/v3/lk/documents/create это общий
-    а на /api/v3/lk/documents/commissioning/contract/create это частность
-     */
-    private final String Signature = "signature";
 
     /**
      * положительное значение, которое определяет максимальное количество запросов в этом промежутке времени.
@@ -81,20 +79,52 @@ public class CrptApi {
         checkRequestLimit();
         try {
             lock.lock();
+            String requestBody;
             ObjectMapper objectMapper = new ObjectMapper();
             String product_document = Base64.getEncoder().encodeToString(objectMapper.writeValueAsBytes(document));
-            String requestBody = String.format("{ " +
+            requestBody = String.format("{ " +
                     "\"document_format\":\"%s\"," +
                     "\"product_document\":\"%s\"," +
                     "\"product_group\":\"%s\"," +
                     "\"signature\":\"%s\"," +
                     "\"type\":\"%s\"" +
                     "}", documentFormat, product_document, productGroup, signature, type);
-            httpRequest(requestBody);
+            if (documentFormat == DocumentFormat.LP_INTRODUCE_GOODS) {
+                httpRequest(requestBody);
+            }
+            if (documentFormat == DocumentFormat.LP_INTRODUCE_GOODS_XML) {
+                XmlMapper xmlMapper = new XmlMapper();
+                File file = new File("document.xml");
+                xmlMapper.writeValue(file, requestBody);
+                httpRequest(file, "application/xml");
+            }
+            if (documentFormat == DocumentFormat.LP_INTRODUCE_GOODS_CSV) {
+                CsvMapper csvMapper = new CsvMapper();
+                File file = new File("document.csv");
+                csvMapper.writeValue(file, document);
+                httpRequest(file, "text/csv");
+            }
         } catch (Exception e) {
             throw new RuntimeException(e);
         } finally {
             lock.unlock();
+        }
+    }
+
+    private void httpRequest(File file, String type) {
+        try {
+            HttpPost post = new HttpPost(URL);
+            HttpEntity entity = MultipartEntityBuilder.create()
+                    .addPart("file", new FileBody(file))
+                    .build();
+            post.addHeader("content-type", type);
+            post.setEntity(entity);
+            CloseableHttpClient httpClient = HttpClientBuilder.create().build();
+            httpClient.execute(post);
+            httpClient.close();
+            requestCount++;
+        } catch (Exception ex) {
+            ex.printStackTrace();
         }
     }
 
@@ -119,7 +149,6 @@ public class CrptApi {
             httpClient.execute(post);
             httpClient.close();
             requestCount++;
-            System.out.println("отправил");
         } catch (Exception ex) {
             ex.printStackTrace();
         }
@@ -131,16 +160,13 @@ public class CrptApi {
      * @throws InterruptedException
      */
     private void checkRequestLimit() throws InterruptedException {
-        // В одну секунду не больше 5 запросов
-        System.out.println("checkRequestLimit");
+        // В период не больше n запросов
         final long current = System.currentTimeMillis(); // время текущего запроса
         // проверка на время запросов
         if (current - startRequest >= timeUnit.toMillis(1)) {
             startRequest = current;
             requestCount = 0;
         }
-
-
         if (requestCount >= requestLimit) {
             // проверяем на кол-во и если больше то
             // смотрим сколько времени осталось до лимита и на остаток ложим спать
@@ -149,7 +175,6 @@ public class CrptApi {
 
             if (difference <= timeUnit.toMillis(1)) {
                 final long toSleep = timeUnit.toMillis(1) - difference;
-                System.out.println("toSleep " + toSleep);
                 Thread.sleep(toSleep);
 //                При превышении лимита запрос должен блокироваться, чтобы не превысить
 //                максимальное количество запросов к API и продолжить выполнение, когда ограничение
@@ -158,50 +183,32 @@ public class CrptApi {
         }
     }
 
-    public synchronized void createDocument(Main.DocumentFormat documentFormat, Main.Document document, String productGroup, String signature, String type) throws InterruptedException {
-        checkRequestLimit();
-        try {
-            lock.lock();
-            ObjectMapper objectMapper = new ObjectMapper();
-            String product_document = Base64.getEncoder().encodeToString(objectMapper.writeValueAsBytes(document));
-            String requestBody = String.format("{ " +
-                    "\"document_format\":\"%s\"," +
-                    "\"product_document\":\"%s\"," +
-                    "\"product_group\":\"%s\"," +
-                    "\"signature\":\"%s\"," +
-                    "\"type\":\"%s\"" +
-                    "}", documentFormat, product_document, productGroup, signature, type);
-            httpRequest(requestBody);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        } finally {
-            lock.unlock();
-        }
-
-    }
 
     /**
      * 108 страница
      */
     public class Document {
+        @JsonProperty(required = false)
         private Description description; // не обязательный параметр
         private String doc_id;
         private String doc_status;
         private String doc_type;
-        private Boolean importRequest = true; // не обязательный параметр но в примере стоит true
+        @JsonProperty(required = false)
+        private Boolean importRequest = true; // не обязательный параметр, но в примере стоит true
         private String owner_inn;
         private String participant_inn;
         private String producer_inn;
         private Date production_date;
         // формат 2020-01-23
         private String production_type;
+        @JsonProperty(required = false)
         private List<Product> products;// не обязательный параметр
         private Date reg_date; // Автоматически присваивается при регистрации
         // то есть мы тут null передаем, а система потом присваивает
         // формат 2020-01-23
         @Expose
         private String reg_number; //Генерируется автоматически при регистрации документа
-        // не присваивается, а именно генерируется. Значит не надо передавать это поле
+        // Не присваивается, а именно генерируется. Значит не надо передавать это поле
 
         public Document(Description description,
                         String doc_id,
@@ -297,8 +304,11 @@ public class CrptApi {
     }
 
     public class Product {
-        private String certificate_document; // не обязательный параметр
+        @JsonProperty(required = false)
+        private String certificate_document; // не обязательный параметр. + неясно Енум это или нет
+        @JsonProperty(required = false)
         private Date certificate_document_date; // не обязательный параметр
+        @JsonProperty(required = false)
         private String certificate_document_number; // не обязательный параметр
         private String owner_inn;
         private String producer_inn;
@@ -365,8 +375,8 @@ public class CrptApi {
     }
 
     public enum DocumentFormat {
-        MANUAL,
-        XML,
-        CSV;
+        LP_INTRODUCE_GOODS,
+        LP_INTRODUCE_GOODS_CSV,
+        LP_INTRODUCE_GOODS_XML;
     }
 }
